@@ -1,0 +1,183 @@
+---
+title: "Practical Machine Learning - Course Assignment"
+author: "Dimitrios Valsamidis"
+date: "Thursday, July 23, 2015"
+output: html_document
+---
+
+## Executive Summary
+
+The aim of this project is to create a machine learning algorithm that will be able to predict the way that the 6 people have done the exercise. This is the "classe" variable in the training set. We started by loading and pre-processing the training data. Then we divided the training set to the training and cross validation set in order to perform cross validation. By trying a small number of methods we found that the random forest produced the best accuracy results in our training set and the same happened in our cross validation set. So this was our final prediction model that we used in the course submission for the testing set.
+
+##Loading the data
+
+The following r code is used to load the caret package and the training data.
+
+
+```{r}
+library(caret)
+library(doParallel)
+registerDoParallel(cores=4)
+
+AllTrainingData <- read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+```
+
+##Pre-processing the data
+
+The next part of our analysis is to look and analyze the data. By looking on all the columns immediately we realised that a large number of variables had a lot of "N/A" or "#DIV/0!" or missing values; therefore we decided to remove from our prediction all the variables containing these values.
+
+```{r}
+RemainingVariables <- sapply(AllTrainingData, function(x)!any(is.na(x)|x==""|x=="#DIV/0!"))
+ProcessedAllTrainingData <-AllTrainingData[RemainingVariables]
+dim(ProcessedAllTrainingData)
+```
+
+As, we can see only 60 from the initial 160 variables do not have any of these values. Based on the type of the outcome we want to predict, we should remove all the timestamp variables as well as the X variable that is used as an id.It shouldn't make a difference the time of the day that a person performs an exercise or the person. So we will only include the values showing the activity monitors.
+
+```{r}
+FinalAllTrainingData <- ProcessedAllTrainingData[,-c(1:7)]
+FinalAllTrainingData$classe <- as.factor(FinalAllTrainingData$classe)
+```
+
+## Cross Validation
+
+The next part of our analysis is to divide our training data to the actual training data and to the cross validation part that we will use to compute the out of sample error of our prediction model and to validate our prediction model.
+
+```{r}
+
+set.seed(1000)
+inTrain<-createDataPartition(y=FinalAllTrainingData$classe,p=0.6, list=FALSE)
+training<- FinalAllTrainingData[inTrain,]
+crossValidation <-FinalAllTrainingData[-inTrain,]
+dim(training)
+dim(crossValidation)
+```
+
+## Prediction model development
+
+There are several prediction models and techniques that we can use to create a model. We will start by trying the prediction tree model.
+
+```{r,cache=TRUE}
+modfit1<-train(classe~.,method="rpart",preProcess=c("center","scale"),data=training)
+modfit1
+```
+
+As we can see the accuracy is less than 59%; therefore we need to try a different method. The next method that we will try for our analysis is the random forests. In order to speed up the process we will divide our training data in 5 folds and we will create 1 predictor from each fold. 
+
+```{r,cache=TRUE}
+set.seed=2000
+folds<-createFolds(y=training$classe,k=5, list=TRUE, returnTrain=FALSE)
+training1<-training[folds$Fold1,]
+
+modfit2a<-train(classe~.,method="rf",data=training1, prox=TRUE)
+modfit2a
+```
+
+```{r,cache=TRUE}
+training2<-training[folds$Fold2,]
+
+modfit2b<-train(classe~.,method="rf",data=training2, prox=TRUE)
+modfit2b
+```
+
+```{r,cache=TRUE}
+training3<-training[folds$Fold3,]
+
+modfit2c<-train(classe~.,method="rf",data=training3, prox=TRUE)
+modfit2c
+```
+
+```{r,cache=TRUE}
+training4<-training[folds$Fold4,]
+
+modfit2d<-train(classe~.,method="rf",data=training4, prox=TRUE)
+modfit2d
+```
+
+```{r,cache=TRUE}
+training5<-training[folds$Fold5,]
+
+modfit2e<-train(classe~.,method="rf",data=training5, prox=TRUE)
+modfit2e
+```
+
+
+As you can see each of the models have an accuracy of around 93%. We will now try to combine the different models by using the majority vote technique. In order to avoid the ties, we will use the Accuracies of each model as a weight for each element on the row.
+```{r}
+
+Accuracies<-data.frame(Accuracy1=modfit2a$results[2,2],Accuracy2=modfit2b$results[2,2],Accuracy3=modfit2c$results[2,2],Accuracy4=modfit2d$results[2,2],Accuracy5=modfit2e$results[2,2])
+Accuracies
+
+```
+
+```{r}
+
+pred1<-predict(modfit2a,crossValidation)
+pred2<-predict(modfit2b,crossValidation)
+pred3<-predict(modfit2c,crossValidation)
+pred4<-predict(modfit2d,crossValidation)
+pred5<-predict(modfit2e,crossValidation)
+
+
+predDF<-data.frame(pred1, pred2, pred3, pred4, pred5)
+
+
+predDF$A<-apply(predDF,1, function(x) sum((x=="A")*Accuracies)) 
+predDF$B<-apply(predDF,1, function(x) sum((x=="B")*Accuracies)) 
+predDF$C<-apply(predDF,1, function(x) sum((x=="C")*Accuracies)) 
+predDF$D<-apply(predDF,1, function(x) sum((x=="D")*Accuracies)) 
+predDF$E<-apply(predDF,1, function(x) sum((x=="E")*Accuracies)) 
+predDF$FinalPred<-apply(predDF[6:10],1,function(x) names(which.max(x)))
+
+
+```
+
+## Out of sample error
+
+Now we will use the confusionMatrix function to cross validate our final predictor and to calculate the out of sample error.
+
+```{r}
+confusionMatrix(predDF$FinalPred,crossValidation$classe)
+
+```
+
+The results show that the out of sample error is only 1-0.9652=0.0348 or 3.48%.
+
+## Try our prediction algorithm to the testing data
+
+Now that we concluded we will try our solution to the testing data.
+We will first load the data.
+```{r}
+TestingData <- read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+
+```
+
+We will then predict try our solution here. First we use the 5 predictors and then calculate the final one.
+```{r}
+
+pred1<-predict(modfit2a,TestingData)
+pred2<-predict(modfit2b,TestingData)
+pred3<-predict(modfit2c,TestingData)
+pred4<-predict(modfit2d,TestingData)
+pred5<-predict(modfit2e,TestingData)
+
+predDF<-data.frame(pred1, pred2, pred3, pred4, pred5)
+
+
+predDF$A<-apply(predDF,1, function(x) sum((x=="A")*Accuracies)) 
+predDF$B<-apply(predDF,1, function(x) sum((x=="B")*Accuracies)) 
+predDF$C<-apply(predDF,1, function(x) sum((x=="C")*Accuracies)) 
+predDF$D<-apply(predDF,1, function(x) sum((x=="D")*Accuracies)) 
+predDF$E<-apply(predDF,1, function(x) sum((x=="E")*Accuracies)) 
+predDF$FinalPred<-apply(predDF[6:10],1,function(x) names(which.max(x)))
+```
+Now let's see our predictions for the testing data.
+
+```{r}
+predDF$FinalPred
+
+```
+## Conclusions
+
+By processing and trying different prediction algorithms,we have concluded that the best method is the random forest that has only produced a 3.48% out of sample error.
+By trying our prediction to the testing data, we achieved a 20/20 result!
